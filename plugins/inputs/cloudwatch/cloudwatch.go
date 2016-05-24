@@ -135,11 +135,15 @@ func (c *CloudWatch) Gather(acc telegraf.Accumulator) error {
 	now := time.Now()
 
 	// limit concurrency or we can easily exhaust user connection limit
-	semaphore := make(chan byte, 64)
-
-	for _, m := range metrics {
+	semaphore := make(chan byte, 10)
+	for i, m := range metrics {
 		semaphore <- 0x1
 		go c.gatherMetric(acc, m, now, semaphore, errChan)
+		// CloudWatch API metrics are limited to 10 per second.
+		// http://docs.aws.amazon.com/AmazonCloudWatch/latest/DeveloperGuide/cloudwatch_limits.html
+		if (i+1)%10 == 0 {
+			time.Sleep(time.Second)
+		}
 	}
 
 	for i := 1; i <= metricCount; i++ {
@@ -216,12 +220,18 @@ func (c *CloudWatch) fetchNamespaceMetrics() (metrics []*cloudwatch.Metric, err 
 /*
  * Gather given Metric and emit any error
  */
-func (c *CloudWatch) gatherMetric(acc telegraf.Accumulator, metric *cloudwatch.Metric, now time.Time, semaphore chan byte, errChan chan error) {
+func (c *CloudWatch) gatherMetric(
+	acc telegraf.Accumulator,
+	metric *cloudwatch.Metric,
+	now time.Time,
+	semaphore chan byte,
+	errChan chan error,
+) {
+	defer func() { <-semaphore }()
 	params := c.getStatisticsInput(metric, now)
 	resp, err := c.client.GetMetricStatistics(params)
 	if err != nil {
 		errChan <- err
-		<-semaphore
 		return
 	}
 
@@ -258,7 +268,6 @@ func (c *CloudWatch) gatherMetric(acc telegraf.Accumulator, metric *cloudwatch.M
 	}
 
 	errChan <- nil
-	<-semaphore
 }
 
 /*
