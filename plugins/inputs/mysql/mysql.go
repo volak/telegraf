@@ -7,10 +7,12 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/internal/errchan"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
@@ -118,26 +120,27 @@ func (m *Mysql) InitMysql() {
 
 func (m *Mysql) Gather(acc telegraf.Accumulator) error {
 	if len(m.Servers) == 0 {
-		// if we can't get stats in this case, thats fine, don't report
-		// an error.
-		m.gatherServer(localhost, acc)
-		return nil
+		// default to localhost if nothing specified.
+		return m.gatherServer(localhost, acc)
 	}
-
 	// Initialise additional query intervals
 	if !initDone {
 		m.InitMysql()
 	}
+	var wg sync.WaitGroup
+	errChan := errchan.New(len(m.Servers))
 
 	// Loop through each server and collect metrics
-	for _, serv := range m.Servers {
-		err := m.gatherServer(serv, acc)
-		if err != nil {
-			return err
-		}
+	for _, server := range m.Servers {
+		wg.Add(1)
+		go func(s string) {
+			defer wg.Done()
+			errChan.C <- m.gatherServer(s, acc)
+		}(server)
 	}
 
-	return nil
+	wg.Wait()
+	return errChan.Error()
 }
 
 type mapping struct {
@@ -305,6 +308,10 @@ var mappings = []*mapping{
 	{
 		onServer: "Threadpool_",
 		inExport: "threadpool_",
+	},
+	{
+		onServer: "wsrep_",
+		inExport: "wsrep_",
 	},
 }
 
@@ -1369,6 +1376,7 @@ func (m *Mysql) gatherPerfEventsStatements(db *sql.DB, serv string, acc telegraf
 			&rowsAffected, &rowsSent, &rowsExamined,
 			&tmpTables, &tmpDiskTables,
 			&sortMergePasses, &sortRows,
+			&noIndexUsed,
 		)
 
 		if err != nil {
@@ -1470,19 +1478,23 @@ func (m *Mysql) gatherTableSchema(db *sql.DB, serv string, acc telegraf.Accumula
 			tags["schema"] = tableSchema
 			tags["table"] = tableName
 
-			acc.Add(newNamespace("info_schema", "table_rows"), tableRows, tags)
+			acc.AddFields(newNamespace("info_schema", "table_rows"),
+				map[string]interface{}{"value": tableRows}, tags)
 
 			dlTags := copyTags(tags)
 			dlTags["component"] = "data_length"
-			acc.Add(newNamespace("info_schema", "table_size", "data_length"), dataLength, dlTags)
+			acc.AddFields(newNamespace("info_schema", "table_size", "data_length"),
+				map[string]interface{}{"value": dataLength}, dlTags)
 
 			ilTags := copyTags(tags)
 			ilTags["component"] = "index_length"
-			acc.Add(newNamespace("info_schema", "table_size", "index_length"), indexLength, ilTags)
+			acc.AddFields(newNamespace("info_schema", "table_size", "index_length"),
+				map[string]interface{}{"value": indexLength}, ilTags)
 
 			dfTags := copyTags(tags)
 			dfTags["component"] = "data_free"
-			acc.Add(newNamespace("info_schema", "table_size", "data_free"), dataFree, dfTags)
+			acc.AddFields(newNamespace("info_schema", "table_size", "data_free"),
+				map[string]interface{}{"value": dataFree}, dfTags)
 
 			versionTags := copyTags(tags)
 			versionTags["type"] = tableType
@@ -1490,7 +1502,8 @@ func (m *Mysql) gatherTableSchema(db *sql.DB, serv string, acc telegraf.Accumula
 			versionTags["row_format"] = rowFormat
 			versionTags["create_options"] = createOptions
 
-			acc.Add(newNamespace("info_schema", "table_version"), version, versionTags)
+			acc.AddFields(newNamespace("info_schema", "table_version"),
+				map[string]interface{}{"value": version}, versionTags)
 		}
 	}
 	return nil
@@ -1503,7 +1516,7 @@ func parseValue(value sql.RawBytes) (float64, bool) {
 	}
 
 	if bytes.Compare(value, []byte("No")) == 0 || bytes.Compare(value, []byte("OFF")) == 0 {
-		return 0, false
+		return 0, true
 	}
 	n, err := strconv.ParseFloat(string(value), 64)
 	return n, err == nil

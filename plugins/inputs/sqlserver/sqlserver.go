@@ -166,7 +166,9 @@ func (s *SQLServer) accRow(query Query, acc telegraf.Accumulator, row scanner) e
 
 	if query.ResultByRow {
 		// add measurement to Accumulator
-		acc.Add(measurement, *columnMap["value"], tags, time.Now())
+		acc.AddFields(measurement,
+			map[string]interface{}{"value": *columnMap["value"]},
+			tags, time.Now())
 	} else {
 		// values
 		for header, val := range columnMap {
@@ -290,8 +292,8 @@ IF OBJECT_ID('tempdb..#clerk') IS NOT NULL
 	DROP TABLE #clerk;
 
 CREATE TABLE #clerk (
-    ClerkCategory nvarchar(64) NOT NULL, 
-    UsedPercent decimal(9,2), 
+    ClerkCategory nvarchar(64) NOT NULL,
+    UsedPercent decimal(9,2),
     UsedBytes bigint
 );
 
@@ -400,6 +402,8 @@ IF OBJECT_ID('tempdb..#baseline') IS NOT NULL
 	DROP TABLE #baseline;
 SELECT
     DB_NAME(mf.database_id) AS database_name ,
+    mf.size as database_size_8k_pages,
+    mf.max_size as database_max_size_8k_pages,
     size_on_disk_bytes ,
 	type_desc as datafile_type,
     GETDATE() AS baselineDate
@@ -435,6 +439,50 @@ FROM #baseline
 WHERE datafile_type = ''ROWS''
 ) as V
 PIVOT(SUM(size_on_disk_bytes) FOR database_name IN (' + @ColumnName + ')) AS PVTTable
+
+UNION ALL
+
+SELECT measurement = ''Rows size (8KB pages)'', servername = REPLACE(@@SERVERNAME, ''\'', '':''), type = ''Database size''
+, ' + @ColumnName + '  FROM
+(
+SELECT database_name, database_size_8k_pages
+FROM #baseline
+WHERE datafile_type = ''ROWS''
+) as V
+PIVOT(SUM(database_size_8k_pages) FOR database_name IN (' + @ColumnName + ')) AS PVTTable
+
+UNION ALL
+
+SELECT measurement = ''Log size (8KB pages)'', servername = REPLACE(@@SERVERNAME, ''\'', '':''), type = ''Database size''
+, ' + @ColumnName + '  FROM
+(
+SELECT database_name, database_size_8k_pages
+FROM #baseline
+WHERE datafile_type = ''LOG''
+) as V
+PIVOT(SUM(database_size_8k_pages) FOR database_name IN (' + @ColumnName + ')) AS PVTTable
+
+UNION ALL
+
+SELECT measurement = ''Rows max size (8KB pages)'', servername = REPLACE(@@SERVERNAME, ''\'', '':''), type = ''Database size''
+, ' + @ColumnName + '  FROM
+(
+SELECT database_name, database_max_size_8k_pages
+FROM #baseline
+WHERE datafile_type = ''ROWS''
+) as V
+PIVOT(SUM(database_max_size_8k_pages) FOR database_name IN (' + @ColumnName + ')) AS PVTTable
+
+UNION ALL
+
+SELECT measurement = ''Logs max size (8KB pages)'', servername = REPLACE(@@SERVERNAME, ''\'', '':''), type = ''Database size''
+, ' + @ColumnName + '  FROM
+(
+SELECT database_name, database_max_size_8k_pages
+FROM #baseline
+WHERE datafile_type = ''LOG''
+) as V
+PIVOT(SUM(database_max_size_8k_pages) FOR database_name IN (' + @ColumnName + ')) AS PVTTable
 '
 --PRINT @DynamicPivotQuery
 EXEC sp_executesql @DynamicPivotQuery;

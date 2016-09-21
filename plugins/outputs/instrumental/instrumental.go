@@ -28,12 +28,15 @@ type Instrumental struct {
 }
 
 const (
-	DefaultHost = "collector.instrumentalapp.com"
-	AuthFormat  = "hello version go/telegraf/1.0\nauthenticate %s\n"
+	DefaultHost     = "collector.instrumentalapp.com"
+	HelloMessage    = "hello version go/telegraf/1.1\n"
+	AuthFormat      = "authenticate %s\n"
+	HandshakeFormat = HelloMessage + AuthFormat
 )
 
 var (
-	StatIncludesBadChar = regexp.MustCompile("[^[:alnum:][:blank:]-_.]")
+	ValueIncludesBadChar = regexp.MustCompile("[^[:digit:].]")
+	MetricNameReplacer   = regexp.MustCompile("[^-[:alnum:]_.]+")
 )
 
 var sampleConfig = `
@@ -52,6 +55,7 @@ var sampleConfig = `
 
 func (i *Instrumental) Connect() error {
 	connection, err := net.DialTimeout("tcp", i.Host+":8000", i.Timeout.Duration)
+
 	if err != nil {
 		i.conn = nil
 		return err
@@ -128,8 +132,17 @@ func (i *Instrumental) Write(metrics []telegraf.Metric) error {
 		}
 
 		for _, stat := range stats {
-			if !StatIncludesBadChar.MatchString(stat) {
-				points = append(points, fmt.Sprintf("%s %s", metricType, stat))
+			// decompose "metric.name value time"
+			splitStat := strings.SplitN(stat, " ", 3)
+			metric := splitStat[0]
+			value := splitStat[1]
+			time := splitStat[2]
+
+			// replace invalid components of metric name with underscore
+			clean_metric := MetricNameReplacer.ReplaceAllString(metric, "_")
+
+			if !ValueIncludesBadChar.MatchString(value) {
+				points = append(points, fmt.Sprintf("%s %s %s %s", metricType, clean_metric, value, time))
 			} else if i.Debug {
 				log.Printf("Unable to send bad stat: %s", stat)
 			}
@@ -151,6 +164,11 @@ func (i *Instrumental) Write(metrics []telegraf.Metric) error {
 		return err
 	}
 
+	// force the connection closed after sending data
+	// to deal with various disconnection scenarios and eschew holding
+	// open idle connections en masse
+	i.Close()
+
 	return nil
 }
 
@@ -163,7 +181,7 @@ func (i *Instrumental) SampleConfig() string {
 }
 
 func (i *Instrumental) authenticate(conn net.Conn) error {
-	_, err := fmt.Fprintf(conn, AuthFormat, i.ApiToken)
+	_, err := fmt.Fprintf(conn, HandshakeFormat, i.ApiToken)
 	if err != nil {
 		return err
 	}
