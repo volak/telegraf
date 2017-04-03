@@ -146,13 +146,13 @@ func (s *Snmp) init() error {
 
 	for i := range s.Tables {
 		if err := s.Tables[i].init(); err != nil {
-			return err
+			return Errorf(err, "initializing table %s", s.Tables[i].Name)
 		}
 	}
 
 	for i := range s.Fields {
 		if err := s.Fields[i].init(); err != nil {
-			return err
+			return Errorf(err, "initializing field %s", s.Fields[i].Name)
 		}
 	}
 
@@ -167,6 +167,9 @@ type Table struct {
 
 	// Which tags to inherit from the top-level config.
 	InheritTags []string
+
+	// Adds each row's table index as a tag.
+	IndexAsTag bool
 
 	// Fields is the tags and values to look up.
 	Fields []Field `toml:"field"`
@@ -192,7 +195,7 @@ func (t *Table) init() error {
 	// initialize all the nested fields
 	for i := range t.Fields {
 		if err := t.Fields[i].init(); err != nil {
-			return err
+			return Errorf(err, "initializing field %s", t.Fields[i].Name)
 		}
 	}
 
@@ -210,7 +213,7 @@ func (t *Table) initBuild() error {
 
 	_, _, oidText, fields, err := snmpTable(t.Oid)
 	if err != nil {
-		return Errorf(err, "initializing table %s", t.Oid)
+		return err
 	}
 	if t.Name == "" {
 		t.Name = oidText
@@ -252,7 +255,7 @@ func (f *Field) init() error {
 
 	_, oidNum, oidText, conversion, err := snmpTranslate(f.Oid)
 	if err != nil {
-		return Errorf(err, "translating %s", f.Oid)
+		return Errorf(err, "translating")
 	}
 	f.Oid = oidNum
 	if f.Name == "" {
@@ -358,7 +361,7 @@ func (s *Snmp) Gather(acc telegraf.Accumulator) error {
 		// Now is the real tables.
 		for _, t := range s.Tables {
 			if err := s.gatherTable(acc, gs, t, topTags, true); err != nil {
-				acc.AddError(Errorf(err, "agent %s", agent))
+				acc.AddError(Errorf(err, "agent %s: gathering table %s", agent, t.Name))
 			}
 		}
 	}
@@ -406,7 +409,7 @@ func (t Table) Build(gs snmpConnection, walk bool) (*RTable, error) {
 		}
 
 		if len(f.Oid) == 0 {
-			return nil, fmt.Errorf("cannot have empty OID")
+			return nil, fmt.Errorf("cannot have empty OID on field %s", f.Name)
 		}
 		var oid string
 		if f.Oid[0] == '.' {
@@ -426,16 +429,14 @@ func (t Table) Build(gs snmpConnection, walk bool) (*RTable, error) {
 			// empty string. This results in all the non-table fields sharing the same
 			// index, and being added on the same row.
 			if pkt, err := gs.Get([]string{oid}); err != nil {
-				return nil, Errorf(err, "performing get")
+				return nil, Errorf(err, "performing get on field %s", f.Name)
 			} else if pkt != nil && len(pkt.Variables) > 0 && pkt.Variables[0].Type != gosnmp.NoSuchObject && pkt.Variables[0].Type != gosnmp.NoSuchInstance {
 				ent := pkt.Variables[0]
 				fv, err := fieldConvert(f.Conversion, ent.Value)
 				if err != nil {
-					return nil, Errorf(err, "converting %q", ent.Value)
+					return nil, Errorf(err, "converting %q (OID %s) for field %s", ent.Value, ent.Name, f.Name)
 				}
-				if fvs, ok := fv.(string); !ok || fvs != "" {
-					ifv[""] = fv
-				}
+				ifv[""] = fv
 			}
 		} else {
 			err := gs.Walk(oid, func(ent gosnmp.SnmpPDU) error {
@@ -454,36 +455,43 @@ func (t Table) Build(gs snmpConnection, walk bool) (*RTable, error) {
 
 				fv, err := fieldConvert(f.Conversion, ent.Value)
 				if err != nil {
-					return Errorf(err, "converting %q", ent.Value)
+					return Errorf(err, "converting %q (OID %s) for field %s", ent.Value, ent.Name, f.Name)
 				}
-				if fvs, ok := fv.(string); !ok || fvs != "" {
-					ifv[idx] = fv
-				}
+				ifv[idx] = fv
 				return nil
 			})
 			if err != nil {
 				if _, ok := err.(NestedError); !ok {
-					return nil, Errorf(err, "performing bulk walk")
+					return nil, Errorf(err, "performing bulk walk for field %s", f.Name)
 				}
 			}
 		}
 
-		for i, v := range ifv {
-			rtr, ok := rows[i]
+		for idx, v := range ifv {
+			rtr, ok := rows[idx]
 			if !ok {
 				rtr = RTableRow{}
 				rtr.Tags = map[string]string{}
 				rtr.Fields = map[string]interface{}{}
-				rows[i] = rtr
+				rows[idx] = rtr
 			}
-			if f.IsTag {
-				if vs, ok := v.(string); ok {
-					rtr.Tags[f.Name] = vs
-				} else {
-					rtr.Tags[f.Name] = fmt.Sprintf("%v", v)
+			if t.IndexAsTag && idx != "" {
+				if idx[0] == '.' {
+					idx = idx[1:]
 				}
-			} else {
-				rtr.Fields[f.Name] = v
+				rtr.Tags["index"] = idx
+			}
+			// don't add an empty string
+			if vs, ok := v.(string); !ok || vs != "" {
+				if f.IsTag {
+					if ok {
+						rtr.Tags[f.Name] = vs
+					} else {
+						rtr.Tags[f.Name] = fmt.Sprintf("%v", v)
+					}
+				} else {
+					rtr.Fields[f.Name] = v
+				}
 			}
 		}
 	}
@@ -494,10 +502,6 @@ func (t Table) Build(gs snmpConnection, walk bool) (*RTable, error) {
 		Rows: make([]RTableRow, 0, len(rows)),
 	}
 	for _, r := range rows {
-		if len(r.Tags) < tagCount {
-			// don't add rows which are missing tags, as without tags you can't filter
-			continue
-		}
 		rt.Rows = append(rt.Rows, r)
 	}
 	return &rt, nil
