@@ -66,7 +66,6 @@ func (a *Pulse) Connect() error {
 
 	return nil
 }
-
 func (a *Pulse) Write(metrics []telegraf.Metric) error {
 	if len(metrics) == 0 {
 		return nil
@@ -83,7 +82,7 @@ func (a *Pulse) Write(metrics []telegraf.Metric) error {
 			StashId: a.StashId,
 			Secret: a.Secret,
 			Source: host,
-			Timestamp: m.Time().Unix(),
+			Timestamp: m.Time().UnixNano() / (int64(time.Millisecond)/int64(time.Nanosecond)),
 			Tags: m.Tags(),
 		}
 
@@ -152,7 +151,7 @@ func buildMetrics(name string, m telegraf.Metric, now time.Time) ([]*Datapoint, 
 	for k, v := range m.Fields() {
 		dp := &Datapoint {
 			Name: name + "_" + k,
-			Timestamp: now.Unix(),
+			Timestamp: now.UnixNano() / (int64(time.Millisecond)/int64(time.Nanosecond)),
 			Value: v,
 		}
 		dps = append(dps, dp)
