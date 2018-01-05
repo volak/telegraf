@@ -120,10 +120,10 @@ func (a *Pulse) Write(metrics []telegraf.Metric) error {
 			defer resp.Body.Close()
 		}
 
-		if err != nil || resp.StatusCode != http.StatusNoContent {
+		if err != nil || resp.StatusCode != http.StatusOk {
 			if err != nil {
 				return fmt.Errorf("%s\n", err)
-			} else if resp.StatusCode != http.StatusNoContent {
+			} else if resp.StatusCode != http.StatusOk {
 				
 				body, err := ioutil.ReadAll(resp.Body)
 				if err != nil {
