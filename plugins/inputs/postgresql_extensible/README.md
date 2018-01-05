@@ -41,7 +41,7 @@ The example below has two queries are specified, with the following parameters:
   # "SELECT * FROM pg_stat_database where datname IN ('postgres', 'pgbench')"
   # because the databases variable was set to ['postgres', 'pgbench' ] and the
   # withdbname was true.
-  # Be careful that if the withdbname is set to false you d'ont have to define
+  # Be careful that if the withdbname is set to false you don't have to define
   # the where clause (aka with the dbname)
   # the tagvalue field is used to define custom tags (separated by comas)
   #
@@ -130,9 +130,9 @@ create extension pg_proctab;
  - pg_stat_kcache is available on the postgresql.org yum repo
  - pg_proctab is available at : https://github.com/markwkm/pg_proctab
 
- ##Views
+ ## Views
  - Blocking sessions
-```
+```sql
 CREATE OR REPLACE VIEW public.blocking_procs AS
  SELECT a.datname AS db,
     kl.pid AS blocking_pid,
@@ -156,7 +156,7 @@ CREATE OR REPLACE VIEW public.blocking_procs AS
   ORDER BY a.query_start;
 ```
   - Sessions Statistics
-```
+```sql
 CREATE OR REPLACE VIEW public.sessions AS
  WITH proctab AS (
          SELECT pg_proctab.pid,

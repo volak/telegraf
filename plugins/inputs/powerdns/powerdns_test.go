@@ -76,7 +76,7 @@ func TestMemcachedGeneratesMetrics(t *testing.T) {
 	binary.Read(rand.Reader, binary.LittleEndian, &randomNumber)
 	socket, err := net.Listen("unix", fmt.Sprintf("/tmp/pdns%d.controlsocket", randomNumber))
 	if err != nil {
-		t.Fatal("Cannot initalize server on port ")
+		t.Fatal("Cannot initialize server on port ")
 	}
 
 	defer socket.Close()
@@ -105,7 +105,7 @@ func TestMemcachedGeneratesMetrics(t *testing.T) {
 		"meta-cache-size", "qsize-q", "signature-cache-size", "sys-msec", "uptime", "user-msec"}
 
 	for _, metric := range intMetrics {
-		assert.True(t, acc.HasIntField("powerdns", metric), metric)
+		assert.True(t, acc.HasInt64Field("powerdns", metric), metric)
 	}
 }
 

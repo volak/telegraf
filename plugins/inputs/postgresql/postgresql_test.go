@@ -51,11 +51,11 @@ func TestPostgresqlGeneratesMetrics(t *testing.T) {
 		"checkpoints_req",
 		"checkpoints_timed",
 		"maxwritten_clean",
-	}
-
-	int32Metrics := []string{
+		"datid",
 		"numbackends",
 	}
+
+	int32Metrics := []string{}
 
 	floatMetrics := []string{
 		"blk_read_time",
@@ -66,7 +66,6 @@ func TestPostgresqlGeneratesMetrics(t *testing.T) {
 
 	stringMetrics := []string{
 		"datname",
-		"datid",
 	}
 
 	metricsCounted := 0
@@ -74,7 +73,7 @@ func TestPostgresqlGeneratesMetrics(t *testing.T) {
 	for _, metric := range intMetrics {
 		_, ok := availableColumns[metric]
 		if ok {
-			assert.True(t, acc.HasIntField("postgresql", metric))
+			assert.True(t, acc.HasInt64Field("postgresql", metric))
 			metricsCounted++
 		}
 	}

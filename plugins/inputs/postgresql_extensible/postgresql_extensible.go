@@ -141,7 +141,7 @@ func (p *Postgresql) Gather(acc telegraf.Accumulator) error {
 	query = `select substring(setting from 1 for 3) as version from pg_settings where name='server_version_num'`
 	err = db.QueryRow(query).Scan(&db_version)
 	if err != nil {
-		return err
+		db_version = 0
 	}
 	// We loop in order to process each query
 	// Query is not run if Database version does not match the query version.
@@ -231,8 +231,12 @@ func (p *Postgresql) SanitizedAddress() (_ string, err error) {
 }
 
 func (p *Postgresql) accRow(meas_name string, row scanner, acc telegraf.Accumulator) error {
-	var columnVars []interface{}
-	var dbname bytes.Buffer
+	var (
+		err        error
+		columnVars []interface{}
+		dbname     bytes.Buffer
+		tagAddress string
+	)
 
 	// this is where we'll store the column name with its *interface{}
 	columnMap := make(map[string]*interface{})
@@ -247,11 +251,10 @@ func (p *Postgresql) accRow(meas_name string, row scanner, acc telegraf.Accumula
 	}
 
 	// deconstruct array of variables and send to Scan
-	err := row.Scan(columnVars...)
-
-	if err != nil {
+	if err = row.Scan(columnVars...); err != nil {
 		return err
 	}
+
 	if columnMap["datname"] != nil {
 		// extract the database name from the column map
 		dbname.WriteString((*columnMap["datname"]).(string))
@@ -259,17 +262,16 @@ func (p *Postgresql) accRow(meas_name string, row scanner, acc telegraf.Accumula
 		dbname.WriteString("postgres")
 	}
 
-	var tagAddress string
-	tagAddress, err = p.SanitizedAddress()
-	if err != nil {
+	if tagAddress, err = p.SanitizedAddress(); err != nil {
 		return err
 	}
 
 	// Process the additional tags
+	tags := map[string]string{
+		"server": tagAddress,
+		"db":     dbname.String(),
+	}
 
-	tags := map[string]string{}
-	tags["server"] = tagAddress
-	tags["db"] = dbname.String()
 	fields := make(map[string]interface{})
 COLUMN:
 	for col, val := range columnMap {
@@ -295,6 +297,7 @@ COLUMN:
 			}
 			continue COLUMN
 		}
+
 		if v, ok := (*val).([]byte); ok {
 			fields[col] = string(v)
 		} else {

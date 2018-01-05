@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"syscall"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
@@ -84,6 +85,7 @@ func getEmptyFields() map[string]interface{} {
 		fields["dead"] = int64(0)
 		fields["paging"] = int64(0)
 		fields["total_threads"] = int64(0)
+		fields["idle"] = int64(0)
 	}
 	return fields
 }
@@ -131,14 +133,14 @@ func (p *Processes) gatherFromPS(fields map[string]interface{}) error {
 
 // get process states from /proc/(pid)/stat files
 func (p *Processes) gatherFromProc(fields map[string]interface{}) error {
-	filenames, err := filepath.Glob("/proc/[0-9]*/stat")
+	filenames, err := filepath.Glob(GetHostProc() + "/[0-9]*/stat")
+
 	if err != nil {
 		return err
 	}
 
 	for _, filename := range filenames {
 		_, err := os.Stat(filename)
-
 		data, err := p.readProcFile(filename)
 		if err != nil {
 			return err
@@ -173,6 +175,8 @@ func (p *Processes) gatherFromProc(fields map[string]interface{}) error {
 			fields["stopped"] = fields["stopped"].(int64) + int64(1)
 		case 'W':
 			fields["paging"] = fields["paging"].(int64) + int64(1)
+		case 'I':
+			fields["idle"] = fields["idle"].(int64) + int64(1)
 		default:
 			log.Printf("I! processes: Unknown state [ %s ] in file %s",
 				string(stats[0][0]), filename)
@@ -195,6 +199,13 @@ func readProcFile(filename string) ([]byte, error) {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
+
+		// Reading from /proc/<PID> fails with ESRCH if the process has
+		// been terminated between open() and read().
+		if perr, ok := err.(*os.PathError); ok && perr.Err == syscall.ESRCH {
+			return nil, nil
+		}
+
 		return nil, err
 	}
 
