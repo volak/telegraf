@@ -1,12 +1,10 @@
 package amon
 
 import (
-	"os"
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -37,7 +35,7 @@ var sampleConfig = `
 `
 type Data struct {
 	Timestamp int64 `json:"timestamp"`
-	Data interface{} `json:"data"`
+	Data map[string]interface{} `json:"data"`
 }
 type BulkEvent struct {
 	StashId string `json:"stashid"`
@@ -65,36 +63,34 @@ func (a *Pulse) Write(metrics []telegraf.Metric) error {
 		return nil
 	}
 
-	host, e := os.Hostname()
-	if e != nil {
-		host = "UNKNOWN"
-	}
-
-	events := make(map[string][]*BulkEvent{})
+	events := make(map[string]*BulkEvent)
 
 	for _, m := range metrics {
 
 		mname := strings.Replace(m.Name(), "_", ".", -1)
-		val, ok := events[mname];
-		if ok == false {
-			val := &BulkEventMark{
-				StashId: a.StashId,
-				Secret: a.Secret,
-				Name: mname,
-				Tags: m.Tags(),
-			}
-		}
 
 		data := &Data {
-			Timestamp: m.Time().UnixNano() / (int64(time.Millisecond)/int64(time.Nanosecond)),
-			Data: m.Fields(),
+				Timestamp: m.Time().UnixNano() / (int64(time.Millisecond)/int64(time.Nanosecond)),
+				Data: m.Fields(),
 		}
 
-		val.Data = append(val.Data, data)
-		events[mname] = append(events[mname], val)
+		val, ok := events[mname];
+		if ok == false {
+				newVal := &BulkEvent{
+						StashId: a.StashId,
+						Secret: a.Secret,
+						Name: mname,
+						Tags: m.Tags(),
+				}
+				newVal.Data = append(newVal.Data, data)
+				events[mname] = newVal
+		} else {
+				val.Data = append(val.Data, data)
+				//events[mname] = val
+		}
 	}
 
-	for k, request := range events {
+	for _, request := range events {
 		var buf bytes.Buffer
 		g := gzip.NewWriter(&buf)
 		if err := json.NewEncoder(g).Encode(request); err != nil {
