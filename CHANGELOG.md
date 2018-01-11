@@ -12,6 +12,10 @@
   DROP MEASUREMENT mysql_innodb
   ```
 
+- The `postgresql` plugins now defaults to using a persistent connection to the database.
+  In environments where TCP connections are terminated the `max_lifetime`
+  setting should be set less than the collection `interval` to prevent errors.
+
 ### Features
 
 - [#3551](https://github.com/influxdata/telegraf/pull/3551): Add health status mapping from string to int in elasticsearch input.
@@ -20,12 +24,16 @@
 - [#3632](https://github.com/influxdata/telegraf/pull/3632): Add wired field to mem input.
 - [#3619](https://github.com/influxdata/telegraf/pull/3619): Add support for gathering exchange metrics to the rabbitmq input.
 - [#3565](https://github.com/influxdata/telegraf/pull/3565): Add support for additional metrics on Linux in zfs input.
+- [#3524](https://github.com/influxdata/telegraf/pull/3524): Add available_entropy field to kernel input plugin.
+- [#3643](https://github.com/influxdata/telegraf/pull/3643): Add user privilege level setting to IPMI sensors.
+- [#2701](https://github.com/influxdata/telegraf/pull/2701): Use persistent connection to postgresql database.
+- [#2846](https://github.com/influxdata/telegraf/pull/2846): Add support for dropwizard input format.
 
 ### Bugfixes
 
 - [#1896](https://github.com/influxdata/telegraf/issues/1896): Fix various mysql data type conversions.
 
-## v1.5.1 [unreleased]
+## v1.5.1 [2017-01-10]
 
 ### Bugfixes
 
@@ -41,7 +49,7 @@
 ### New Plugins
 - [basicstats](./plugins/aggregators/basicstats/README.md) - Thanks to @toni-moreno
 - [bond](./plugins/inputs/bond/README.md) - Thanks to @ildarsv
-- [cratedb](./plugins/outputs/wavefront/README.md) - Thanks to @felixge
+- [cratedb](./plugins/outputs/cratedb/README.md) - Thanks to @felixge
 - [dcos](./plugins/inputs/dcos/README.md) - Thanks to @influxdata
 - [jolokia2](./plugins/inputs/jolokia2/README.md) - Thanks to @dylanmei
 - [nginx_plus](./plugins/inputs/nginx_plus/README.md) - Thanks to @mplonka & @poblahblahblah
