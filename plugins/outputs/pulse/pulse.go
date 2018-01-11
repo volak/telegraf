@@ -35,24 +35,18 @@ var sampleConfig = `
   secret = ""
 
 `
-type Datapoint struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+type Data struct {
 	Timestamp int64 `json:"timestamp"`
-	Value interface{} `json:"value"`
+	Data interface{} `json:"data"`
 }
-type Mark struct {
+type BulkEvent struct {
 	StashId string `json:"stashid"`
 	Secret string `json:"secret"`
-	Source string `json:"source"`
-	Timestamp int64 `json:"timestamp"`
+
+	Name string `json:"name"`
 
 	Tags map[string]string `json:"tags"`
-	Datapoints []*Datapoint `json:"datapoints"`
-}
-type Marks struct {
-	StashId string `json:"stashid"`
-	Marks []*Mark `json:"marks"`
+	Data []*Data `json:"data"`
 }
 
 func (a *Pulse) Connect() error {
@@ -76,40 +70,41 @@ func (a *Pulse) Write(metrics []telegraf.Metric) error {
 		host = "UNKNOWN"
 	}
 
-	marks := []*Mark{}
+	events := make(map[string][]*BulkEvent{})
+
 	for _, m := range metrics {
-		mark := &Mark{
-			StashId: a.StashId,
-			Secret: a.Secret,
-			Source: host,
-			Timestamp: m.Time().UnixNano() / (int64(time.Millisecond)/int64(time.Nanosecond)),
-			Tags: m.Tags(),
-		}
 
 		mname := strings.Replace(m.Name(), "_", ".", -1)
-		if dps, err := buildMetrics(mname, m, m.Time()); err == nil {
-			mark.Datapoints = dps
-		} else {
-			log.Printf("unable to build Metric for %s, skipping\n", m.Name())
+		val, ok := events[mname];
+		if ok == false {
+			val := &BulkEventMark{
+				StashId: a.StashId,
+				Secret: a.Secret,
+				Name: mname,
+				Tags: m.Tags(),
+			}
 		}
 
-		marks = append(marks, mark)
+		data := &Data {
+			Timestamp: m.Time().UnixNano() / (int64(time.Millisecond)/int64(time.Nanosecond)),
+			Data: m.Fields(),
+		}
+
+		val.Data = append(val.Data, data)
+		events[mname] = append(events[mname], val)
 	}
 
-	request := Marks{
-		StashId: a.StashId,
-		Marks: marks,
-	}
-	var buf bytes.Buffer
-	g := gzip.NewWriter(&buf)
-	if err := json.NewEncoder(g).Encode(request); err != nil {
-			return fmt.Errorf("unable to encode request, %s\n", err)
-	}
-	if err := g.Close(); err != nil {
-			return fmt.Errorf("unable to encode request, %s\n", err)
-	}
+	for k, request := range events {
+		var buf bytes.Buffer
+		g := gzip.NewWriter(&buf)
+		if err := json.NewEncoder(g).Encode(request); err != nil {
+				return fmt.Errorf("unable to encode request, %s\n", err)
+		}
+		if err := g.Close(); err != nil {
+				return fmt.Errorf("unable to encode request, %s\n", err)
+		}
 
-		req, err := http.NewRequest("POST", fmt.Sprintf("%s/stash/%s/marks?format=json", a.Host, a.StashId), &buf)
+		req, err := http.NewRequest("POST", fmt.Sprintf("%s/stash/%s/events?format=json", a.Host, a.StashId), &buf)
 		if err != nil {
 			return fmt.Errorf("unable to create http.Request, %s\n", err.Error())
 		}
@@ -134,6 +129,7 @@ func (a *Pulse) Write(metrics []telegraf.Metric) error {
 			}
 		}
 
+	}
 	return nil
 }
 
@@ -143,20 +139,6 @@ func (a *Pulse) SampleConfig() string {
 
 func (a *Pulse) Description() string {
 	return "Configuration for Pulse Server to send metrics to."
-}
-
-
-func buildMetrics(name string, m telegraf.Metric, now time.Time) ([]*Datapoint, error) {
-	dps := []*Datapoint{}
-	for k, v := range m.Fields() {
-		dp := &Datapoint {
-			Name: name + "_" + k,
-			Timestamp: now.UnixNano() / (int64(time.Millisecond)/int64(time.Nanosecond)),
-			Value: v,
-		}
-		dps = append(dps, dp)
-	}
-	return dps, nil
 }
 
 
